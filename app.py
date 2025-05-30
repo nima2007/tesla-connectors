@@ -33,6 +33,24 @@ def load_connector_metadata():
             st.error(f"An unexpected error occurred while processing {filename}: {e}")
     return connector_files_metadata
 
+# --- Load Specific Connector Data ---
+@st.cache_data # Cache data for each specific connector file
+def load_specific_connector_data(filename):
+    try:
+        with open(filename, 'r') as f:
+            full_file_data = json.load(f)
+            # Return only the 'connectors' list, or the whole data if needed elsewhere
+            return full_file_data.get("connectors", [])
+    except FileNotFoundError:
+        st.error(f"Error: File '{filename}' not found.")
+        return [] # Return empty list on error
+    except json.JSONDecodeError:
+        st.error(f"Error: Could not decode JSON from '{filename}'. Ensure it is valid.")
+        return [] # Return empty list on error
+    except Exception as e:
+        st.error(f"An unexpected error occurred while loading data from {filename}: {e}")
+        return [] # Return empty list on error
+
 all_connectors_metadata = load_connector_metadata()
 
 if not all_connectors_metadata:
@@ -144,30 +162,16 @@ if selected_model and selected_sop_display_string: # This is now just "SOP1", "S
         st.error(f"Internal error: Could not find data file for Model: {selected_model}, SOP: {selected_sop_display_string}")
         st.stop()
 
-# Load connector data from the determined file
+# Load connector data from the determined file using the cached function
 if target_filename:
-    try:
-        with open(target_filename) as f:
-            full_file_data = json.load(f)
-            connectors_data = full_file_data.get("connectors", [])
-            # Separator before the main search filters start.
-            # This was previously after build info display, now it's just after SOP selection logic.
-            # The static build info list has its own separators.
-            # The st.sidebar.markdown("---") that was here is removed as the static list section handles its own separators.
-            # Let's ensure there's one before the "Connector Search Filters" header.
-            # The "Connector Search Filters" header is added later, so this is fine.
-
-    except FileNotFoundError:
-        st.error(f"Error: File '{target_filename}' not found for {selected_model} - {selected_sop_display}.")
-        st.stop()
-    except json.JSONDecodeError:
-        st.error(f"Error: Could not decode JSON from '{target_filename}'. Ensure it is a valid JSON file.")
-        st.stop()
-    except Exception as e:
-        st.error(f"An unexpected error occurred while loading data from {target_filename}: {e}")
-        st.stop()
+    connectors_data = load_specific_connector_data(target_filename)
+    if not connectors_data: # If loading failed or returned empty, connectors_data might be an empty list
+        # Error messages are handled within load_specific_connector_data,
+        # but we might want to stop or show a specific message here if it's critical.
+        # For now, if connectors_data is empty, the downstream logic will handle it (e.g., show "No connector data loaded").
+        pass # Continue, and let the app show "No connector data loaded."
 else:
-    # Handle cases where a file couldn't be determined
+    # Handle cases where a file couldn't be determined (target_filename is None)
     if selected_model and selected_sop_display:
         st.warning("Could not determine the data file for the selected model and program.")
     elif selected_model:
@@ -193,7 +197,8 @@ else:
 if not df.empty:
     df['pinout_table'] = df['pinout_table'].apply(lambda x: x if isinstance(x, list) else [])
 
-    df['total_cavities'] = df['pinout_table'].apply(lambda pinouts: len(pinouts))
+    # Optimized total_cavities calculation
+    df['total_cavities'] = df['pinout_table'].str.len()
     df['num_connected_cavities'] = df['pinout_table'].apply(
         lambda pinouts: len([p for p in pinouts if p.get('Terminal Manufacturer') != 'unused' and p.get('Terminal Manufacturer') is not None])
     )
@@ -361,7 +366,48 @@ st.header("Connector Search Results")
 st.write(f"### {len(filtered_df)} connectors found")
 
 if not filtered_df.empty:
-    for index, row in filtered_df.iterrows():
+    ITEMS_PER_PAGE = 10  # Number of items to display per page
+
+    # Initialize page number in session state if it doesn't exist
+    if 'page_number' not in st.session_state:
+        st.session_state.page_number = 0
+    
+    # Reset page number if the number of filtered items changes (indicates new filter applied)
+    if 'last_filtered_count' not in st.session_state or st.session_state.last_filtered_count != len(filtered_df):
+        st.session_state.page_number = 0
+    st.session_state.last_filtered_count = len(filtered_df)
+
+    total_items = len(filtered_df)
+    total_pages = (total_items - 1) // ITEMS_PER_PAGE + 1 if total_items > 0 else 1
+    
+    # Ensure current page number is valid
+    st.session_state.page_number = max(0, min(st.session_state.page_number, total_pages - 1))
+
+    # --- Helper function for pagination controls ---
+    def render_pagination_controls(current_page, total_pages_val, key_prefix):
+        if total_pages_val <= 1:
+            return
+
+        nav_cols = st.columns([1, 2, 1])
+        with nav_cols[0]:
+            if st.button("Previous", key=f"{key_prefix}_prev_page") and current_page > 0:
+                st.session_state.page_number -= 1
+                st.rerun()
+        with nav_cols[1]:
+            st.write(f"Page {current_page + 1} of {total_pages_val}")
+        with nav_cols[2]:
+            if st.button("Next", key=f"{key_prefix}_next_page") and current_page < total_pages_val - 1:
+                st.session_state.page_number += 1
+                st.rerun()
+    
+    # --- Render pagination controls at the top ---
+    render_pagination_controls(st.session_state.page_number, total_pages, "top")
+
+    start_idx = st.session_state.page_number * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    paginated_df_view = filtered_df.iloc[start_idx:end_idx]
+
+    for index, row in paginated_df_view.iterrows():
         st.subheader(row.get('name', 'N/A'))
         
         # Display textual details in two columns for better layout
@@ -392,6 +438,10 @@ if not filtered_df.empty:
 
 
         st.markdown("---") # Separator between connector entries
+    
+    # --- Render pagination controls at the bottom ---
+    render_pagination_controls(st.session_state.page_number, total_pages, "bottom")
+
 else:
     st.write("No connectors match the current filters.")
 
