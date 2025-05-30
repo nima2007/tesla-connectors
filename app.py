@@ -1,7 +1,7 @@
 import json
 import streamlit as st
 import pandas as pd
-import glob # Added
+import glob
 
 # --- Load Connector Metadata ---
 @st.cache_data # Cache this to avoid reloading on every interaction
@@ -22,8 +22,8 @@ def load_connector_metadata():
                         "model": data["model"],
                         "prog_id": data["prog_id"],
                         "sop": data["sop"],
-                        "filename": filename, # Store the original filename
-                        "build_information": data.get("build_information", []) # Get build info, default to empty list
+                        "filename": filename,
+                        "build_information": data.get("build_information", [])
                     })
                 else:
                     st.warning(f"Skipping {filename}: missing one or more required keys ('model', 'prog_id', 'sop', 'connectors') in JSON structure.")
@@ -43,13 +43,13 @@ def load_specific_connector_data(filename):
             return full_file_data.get("connectors", [])
     except FileNotFoundError:
         st.error(f"Error: File '{filename}' not found.")
-        return [] # Return empty list on error
+        return []
     except json.JSONDecodeError:
         st.error(f"Error: Could not decode JSON from '{filename}'. Ensure it is valid.")
-        return [] # Return empty list on error
+        return []
     except Exception as e:
         st.error(f"An unexpected error occurred while loading data from {filename}: {e}")
-        return [] # Return empty list on error
+        return []
 
 all_connectors_metadata = load_connector_metadata()
 
@@ -110,10 +110,8 @@ if selected_model:
         )
 
     # Display static list of ALL SOPs and their build info for the selected MODEL within an expander
-    st.sidebar.markdown("---") # Separator before the expander
+    st.sidebar.markdown("---")
     with st.sidebar.expander(f"View All SOPs & Build Info for {selected_model}", expanded=False):
-        # The title for the list is now part of the expander label or can be a markdown inside
-        # st.markdown(f"**Available Programs (SOPs) for {selected_model}:**") # This can be removed if expander title is enough
 
         temp_seen_sops = set()
         for meta_item in sorted_metadata_for_model: # Iterate through all metadata for the model, sorted by SOP
@@ -125,10 +123,8 @@ if selected_model:
                         st.caption(info_line) # Each build info on its own line as caption
                 else:
                     st.caption("No build information available.")
-                # Add a little visual space before the next SOP, if desired, e.g., st.caption("") or st.markdown("<br>", unsafe_allow_html=True)
-                # For now, let's see how it looks without explicit extra spacing between SOP blocks.
                 temp_seen_sops.add(meta_item["sop"])
-    st.sidebar.markdown("---") # Separator after the expander
+    st.sidebar.markdown("---")
 
 
 if selected_model and selected_sop_display_string: # This is now just "SOP1", "SOP2", etc.
@@ -169,7 +165,7 @@ if target_filename:
         # Error messages are handled within load_specific_connector_data,
         # but we might want to stop or show a specific message here if it's critical.
         # For now, if connectors_data is empty, the downstream logic will handle it (e.g., show "No connector data loaded").
-        pass # Continue, and let the app show "No connector data loaded."
+        pass
 else:
     # Handle cases where a file couldn't be determined (target_filename is None)
     if selected_model and selected_sop_display:
@@ -184,7 +180,7 @@ else:
 # This section now uses the dynamically loaded `connectors_data` (which is a list of connector dictionaries)
 if not connectors_data: # Check if the list of connectors itself is empty or not populated
     st.warning(f"No connector data loaded. Please make a selection or check data files.")
-    df = pd.DataFrame() # Ensure df is an empty DataFrame
+    df = pd.DataFrame()
 else:
     df = pd.DataFrame(connectors_data) # connectors_data is already the list of connector objects
     # Ensure image_urls column exists and handles missing lists/NaN values
@@ -207,7 +203,7 @@ if not df.empty:
     )
     
     df['manufacturer'] = df['connector'].astype(str).str.split().str[0].fillna('')
-    df['connector_part_number_full'] = df['connector'].fillna('') # Full connector string
+    df['connector_part_number_full'] = df['connector'].fillna('')
     df['tesla_part_number_str'] = df['tesla_part_number'].fillna('')
     df['connector_body_color'] = df['color'].fillna('') # 'color' is the connector body color
 
@@ -227,7 +223,7 @@ if not df.empty:
 
 else: # Handle empty DataFrame case for sliders and selectboxes
     df['total_cavities'] = pd.Series(dtype='int')
-    df['num_connected_cavities'] = pd.Series(dtype='int') # Added for empty df
+    df['num_connected_cavities'] = pd.Series(dtype='int')
     df['num_unconnected_cavities'] = pd.Series(dtype='int')
     df['manufacturer'] = pd.Series(dtype='str')
     df['connector_part_number_full'] = pd.Series(dtype='str')
@@ -277,9 +273,7 @@ min_unconn_cav_filter, max_unconn_cav_filter = st.sidebar.slider(
     (0, max_unconn_cav) # Default to full range
 )
 
-# manuf_filter = st.sidebar.text_input("Manufacturer (starts with, case-insensitive)") # Removed
 tesla_pn_filter = st.sidebar.text_input("Tesla Part Number (contains, case-insensitive)")
-# connector_pn_filter = st.sidebar.text_input("Connector Part Number (contains in 'connector' field, case-insensitive)") # Renamed below
 combined_manuf_connector_pn_filter = st.sidebar.text_input("Manuf. / Connector P/N (contains, case-insensitive)")
 
 
@@ -322,18 +316,11 @@ if not df.empty:
     mask = pd.Series([True] * len(df))
 
     mask &= (df.total_cavities.between(min_total_cav_filter, max_total_cav_filter))
-    mask &= (df.num_connected_cavities.between(min_conn_cav_filter, max_conn_cav_filter)) # Added filter
+    mask &= (df.num_connected_cavities.between(min_conn_cav_filter, max_conn_cav_filter))
     mask &= (df.num_unconnected_cavities.between(min_unconn_cav_filter, max_unconn_cav_filter))
 
-    # if manuf_filter: # Removed
-    #     mask &= df.manufacturer.str.upper().str.startswith(manuf_filter.upper())
-    
     if tesla_pn_filter:
         mask &= df.tesla_part_number_str.str.upper().str.contains(tesla_pn_filter.upper())
-
-    # if connector_pn_filter: # Replaced by combined_manuf_connector_pn_filter
-    #     # Search within the full 'connector' string (which includes manufacturer and part number)
-    #     mask &= df.connector_part_number_full.str.upper().str.contains(connector_pn_filter.upper())
 
     if combined_manuf_connector_pn_filter:
         search_term_upper = combined_manuf_connector_pn_filter.upper()
@@ -359,7 +346,7 @@ if not df.empty:
     
     filtered_df = df[mask]
 else:
-    filtered_df = df # Empty DataFrame
+    filtered_df = df
 
 # --- Show results ---
 st.header("Connector Search Results")
@@ -437,7 +424,7 @@ if not filtered_df.empty:
                     st.image(img_url, caption=f"Image {i+1}", use_container_width=True)
 
 
-        st.markdown("---") # Separator between connector entries
+        st.markdown("---")
     
     # --- Render pagination controls at the bottom ---
     render_pagination_controls(st.session_state.page_number, total_pages, "bottom")
@@ -447,8 +434,3 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.info("Tip: Clear filters (refresh) or adjust ranges if you don't see expected results.")
-
-# For debugging or viewing all data:
-# if st.checkbox("Show all data (first 100 rows)"):
-#    st.subheader("Raw Data Sample (first 100 rows)")
-#    st.dataframe(df.head(100))
