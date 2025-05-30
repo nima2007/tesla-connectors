@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import json
 import time
 from urllib.parse import urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_URL = "https://service.tesla.com/docs/Model3/ElectricalReference/prog-18/connector/g011/index.html"
 ROOT_URL = "https://service.tesla.com"
@@ -120,15 +121,26 @@ def main():
     if CONNECTOR_LIMIT is not None:
         connector_links = connector_links[:CONNECTOR_LIMIT]
     print(f"Found {len(connector_links)} connectors.")
+
     all_data = []
-    for i, url in enumerate(connector_links):
-        print(f"Scraping {i+1}/{len(connector_links)}: {url}")
+    max_workers = 8  # Adjust based on your CPU/network
+
+    def scrape(url):
         try:
-            data = parse_connector_page(url)
-            all_data.append(data)
-            time.sleep(0.5)  # Be polite
+            return parse_connector_page(url)
         except Exception as e:
             print(f"Failed to scrape {url}: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_url = {executor.submit(scrape, url): url for url in connector_links}
+        for i, future in enumerate(as_completed(future_to_url), 1):
+            url = future_to_url[future]
+            data = future.result()
+            if data:
+                all_data.append(data)
+            print(f"Scraped {i}/{len(connector_links)}: {url}")
+
     with open("connectors.json", "w", encoding="utf-8") as f:
         json.dump(all_data, f, indent=2, ensure_ascii=False)
     print("Saved to connectors.json")
