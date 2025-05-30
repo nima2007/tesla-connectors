@@ -7,7 +7,7 @@ import glob
 @st.cache_data # Cache this to avoid reloading on every interaction
 def load_connector_metadata():
     connector_files_metadata = []
-    file_pattern = "connectors_*.json" 
+    file_pattern = "connectors/connectors_*.json" 
 
     for filename in glob.glob(file_pattern):
         if "old_" in filename.lower(): # Heuristic to skip files like 'old_connectors_prog-13.json'

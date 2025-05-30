@@ -10,7 +10,7 @@ ROOT_URL = "https://service.tesla.com"
 # Set this to None to scrape all connectors, or to an integer for testing
 CONNECTOR_LIMIT = None  # Set to None for no limit
 
-PROG_DETAILS_LIST = [
+PROG_DETAILS_LISR_3 = [
     {
         "model": "Model3",
         "prog_id": "prog-233",
@@ -80,6 +80,85 @@ PROG_DETAILS_LIST = [
         ]
     }
 ]
+
+PROG_DETAILS_LIST_Y = [
+    {
+        "model": "ModelY",
+        "prog_id": "prog-217",
+        "sop": "SOP7",
+        "build_information": [
+            "Shanghai: 2025-02-17 - Present",
+            "Berlin: 2025-02-17 - Present",
+            "Austin: 2025-02-24 - Present",
+            "Fremont: 2025-02-24 - Present"
+        ]
+    },
+    {
+        "model": "ModelY",
+        "prog_id": "prog-202",
+        "sop": "SOP6",
+        "build_information": [
+            "Structural Pack Vehicles",
+            "Austin: 2023-06-04 - 2025-02-23",
+            "Berlin: 2024-04-01 - 2025-02-16"
+        ]
+    },
+    {
+        "model": "ModelY",
+        "prog_id": "prog-201",
+        "sop": "SOP5",
+        "build_information": [
+            "Non-Structural Pack Vehicles",
+            "Fremont: 2023-05-23 - 2025-02-23",
+            "Austin: 2023-06-02 - 2025-02-23",
+            "Berlin: 2024-05-07 - 2025-02-16",
+            "Shanghai: 2024-02-15 - 2025-02-16"
+        ]
+    },
+    {
+        "model": "ModelY",
+        "prog_id": "prog-196",
+        "sop": "SOP4",
+        "build_information": [
+            "Structural Pack Vehicles",
+            "Austin: 2022-03-28 - 2023-06-03",
+            "Berlin: 2023-04-03 - 2024-03-31"
+        ]
+    },
+    {
+        "model": "ModelY",
+        "prog_id": "prog-188",
+        "sop": "SOP3",
+        "build_information": [
+            "Non-Structural Pack Vehicles",
+            "Fremont: 2022-01-06 - 2023-05-22",
+            "Berlin: 2022-01-06 - 2024-05-06",
+            "Shanghai: 2021-11-15 - 2024-02-14",
+            "Austin: 2022-06-13 - 2023-06-01"
+        ]
+    },
+    {
+        "model": "ModelY",
+        "prog_id": "prog-63",
+        "sop": "SOP2",
+        "build_information": [
+            "Fremont: 2021-01-13 - 2022-01-06",
+            "Shanghai: 2020-12-14 - 2021-11-15",
+            "Berlin: 2021-01-13 - 2022-01-06"
+        ]
+    },
+    {
+        "model": "ModelY",
+        "prog_id": "prog-52",
+        "sop": "SOP1",
+        "build_information": [
+            "Fremont: 2020-01-09 - 2021-01-12"
+        ]
+    }
+]
+
+#PROG_DETAILS_LIST = PROG_DETAILS_LISR_3 + PROG_DETAILS_LIST_Y
+PROG_DETAILS_LIST = PROG_DETAILS_LIST_Y
 
 headers = {
     "User-Agent": "curl/8.7.1",
@@ -257,7 +336,7 @@ def main():
             "connectors": scraped_connectors_data
         }
 
-        output_filename = f"connectors_{model_name}_{current_prog_id}.json"
+        output_filename = f"connectors/connectors_{model_name}_{current_prog_id}.json"
         with open(output_filename, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
         print(f"Saved data for {model_name} {current_prog_id} to {output_filename}")
