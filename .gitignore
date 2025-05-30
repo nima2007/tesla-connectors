@@ -10,8 +10,5 @@ venv/
 dist/
 build/
 
-# Streamlit
-.streamlit/
-
 # macOS
 .DS_Store
