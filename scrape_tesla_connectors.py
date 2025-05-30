@@ -5,11 +5,81 @@ import time
 from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-BASE_URL = "https://service.tesla.com/docs/Model3/ElectricalReference/prog-18/connector/g011/index.html"
 ROOT_URL = "https://service.tesla.com"
 
 # Set this to None to scrape all connectors, or to an integer for testing
 CONNECTOR_LIMIT = None  # Set to None for no limit
+
+PROG_DETAILS_LIST = [
+    {
+        "model": "Model3",
+        "prog_id": "prog-233",
+        "sop": "SOP8",
+        "build_information": [
+            "Shanghai: 2023-09-01 - Present",
+            "Fremont: 2024-01-01 - Present"
+        ]
+    },
+    {
+        "model": "Model3",
+        "prog_id": "prog-187",
+        "sop": "SOP7",
+        "build_information": [
+            "Fremont: 2022-01-17 - 2023-12-31",
+            "Shanghai: 2021-11-12 - 2023-08-31"
+        ]
+    },
+    {
+        "model": "Model3",
+        "prog_id": "prog-219",
+        "sop": "SOP6",
+        "build_information": [
+            "Shanghai: 2021-06-16 - 2021-11-11"
+        ]
+    },
+    {
+        "model": "Model3",
+        "prog_id": "prog-56",
+        "sop": "SOP5",
+        "build_information": [
+            "Fremont: 2020-10-05 - 2022-01-16",
+            "Shanghai: 2020-12-28 - 2021-06-15"
+        ]
+    },
+    {
+        "model": "Model3",
+        "prog_id": "prog-20",
+        "sop": "SOP4",
+        "build_information": [
+            "Fremont: 2019-06-05 - 2020-10-04",
+            "Shanghai: 2019-10-18 - 2020-12-27"
+        ]
+    },
+    {
+        "model": "Model3",
+        "prog_id": "prog-220",
+        "sop": "SOP3",
+        "build_information": [
+            "Fremont: 2019-01-05 - 2019-06-04"
+        ]
+    },
+    {
+        "model": "Model3",
+        "prog_id": "prog-18",
+        "sop": "SOP2",
+        "build_information": [
+            "Fremont: 2018-07-11 - 2019-01-04"
+        ]
+    },
+    {
+        "model": "Model3",
+        "prog_id": "prog-13",
+        "sop": "SOP1",
+        "build_information": [
+            "Fremont: 2017-07-01 - 2018-07-10"
+        ]
+    }
+]
 
 headers = {
     "User-Agent": "curl/8.7.1",
@@ -111,39 +181,86 @@ def parse_connector_page(url):
     return data
 
 def main():
-    print("Fetching connector links...")
-    try:
-        connector_links = get_connector_links(BASE_URL)
-    except Exception as e:
-        print(f"Error: {e}")
-        print("If the sidebar is loaded via JavaScript, use Selenium instead of requests.")
-        return
-    if CONNECTOR_LIMIT is not None:
-        connector_links = connector_links[:CONNECTOR_LIMIT]
-    print(f"Found {len(connector_links)} connectors.")
+    for prog_info in PROG_DETAILS_LIST:
+        model_name = prog_info["model"]
+        current_prog_id = prog_info["prog_id"]
+        sop_info = prog_info["sop"]
+        build_info = prog_info["build_information"]
 
-    all_data = []
-    max_workers = 8  # Adjust based on your CPU/network
+        print(f"\n--- Processing {model_name} {current_prog_id} ({sop_info}) ---")
+        base_url_for_prog = f"https://service.tesla.com/docs/{model_name}/ElectricalReference/{current_prog_id}/connector/g011/index.html"
 
-    def scrape(url):
+        print(f"Fetching connector links for {model_name} {current_prog_id} from {base_url_for_prog}...")
         try:
-            return parse_connector_page(url)
+            connector_links = get_connector_links(base_url_for_prog)
+        except requests.exceptions.RequestException as e:
+            print(f"HTTP Error fetching links for {current_prog_id}: {e}. Skipping this PROG.")
+            continue
         except Exception as e:
-            print(f"Failed to scrape {url}: {e}")
-            return None
+            print(f"Generic error fetching links for {current_prog_id}: {e}. Skipping this PROG.")
+            continue
+        
+        if not connector_links:
+            print(f"No connector links found for {current_prog_id}. Skipping.")
+            continue
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_url = {executor.submit(scrape, url): url for url in connector_links}
-        for i, future in enumerate(as_completed(future_to_url), 1):
-            url = future_to_url[future]
-            data = future.result()
-            if data:
-                all_data.append(data)
-            print(f"Scraped {i}/{len(connector_links)}: {url}")
+        if CONNECTOR_LIMIT is not None:
+            print(f"Limiting to {CONNECTOR_LIMIT} connectors for {current_prog_id}.")
+            connector_links = connector_links[:CONNECTOR_LIMIT]
+        
+        print(f"Found {len(connector_links)} connectors for {current_prog_id}.")
 
-    with open("connectors.json", "w", encoding="utf-8") as f:
-        json.dump(all_data, f, indent=2, ensure_ascii=False)
-    print("Saved to connectors.json")
+        scraped_connectors_data = [] # Initialize list for current_prog's connector data
+        max_workers = 8  # Adjust based on your CPU/network
+
+        def scrape(url_to_scrape):
+            try:
+                return parse_connector_page(url_to_scrape)
+            except Exception as e:
+                # Pass current_prog_id to the logging message
+                print(f"Failed to scrape {url_to_scrape} for {current_prog_id}: {e}")
+                return None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            if not connector_links:
+                print(f"No links to scrape for {current_prog_id}.")
+                continue
+
+            future_to_url = {executor.submit(scrape, link_url): link_url for link_url in connector_links}
+            for i, future in enumerate(as_completed(future_to_url), 1):
+                processed_url = future_to_url[future]
+                data = future.result()
+                if data:
+                    scraped_connectors_data.append(data)
+                
+                connector_name_for_log = "Unknown"
+                if data and data.get('name'):
+                    connector_name_for_log = data['name']
+                elif processed_url:
+                    path_parts = [part for part in processed_url.split('/') if part]
+                    if len(path_parts) >= 2 and path_parts[-1].lower() == "index.html":
+                        connector_name_for_log = path_parts[-2]
+                    elif path_parts:
+                         connector_name_for_log = path_parts[-1]
+                print(f"Scraped {i}/{len(connector_links)} for {current_prog_id}: {connector_name_for_log} ({processed_url})")
+        
+        if not scraped_connectors_data:
+            print(f"No data successfully scraped for {current_prog_id}. Skipping file save.")
+            continue
+
+        # Prepare the final JSON structure
+        output_data = {
+            "model": model_name,
+            "prog_id": current_prog_id,
+            "sop": sop_info,
+            "build_information": build_info,
+            "connectors": scraped_connectors_data
+        }
+
+        output_filename = f"connectors_{model_name}_{current_prog_id}.json"
+        with open(output_filename, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+        print(f"Saved data for {model_name} {current_prog_id} to {output_filename}")
 
 if __name__ == "__main__":
-    main() 
+    main()
