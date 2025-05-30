@@ -1,23 +1,193 @@
 import json
 import streamlit as st
 import pandas as pd
+import glob # Added
 
-# Load data
-try:
-    with open('connectors.json') as f:
-        connectors_data = json.load(f)
-except FileNotFoundError:
-    st.error("Error: 'connectors.json' not found. Please make sure the file exists in the same directory.")
-    st.stop()
-except json.JSONDecodeError:
-    st.error("Error: Could not decode 'connectors.json'. Please ensure it's a valid JSON file.")
+# --- Load Connector Metadata ---
+@st.cache_data # Cache this to avoid reloading on every interaction
+def load_connector_metadata():
+    connector_files_metadata = []
+    file_pattern = "connectors_*.json" 
+
+    for filename in glob.glob(file_pattern):
+        if "old_" in filename.lower(): # Heuristic to skip files like 'old_connectors_prog-13.json'
+            st.info(f"Skipping file with 'old_' in name: {filename}")
+            continue
+        try:
+            with open(filename, 'r') as f:
+                data = json.load(f)
+                # Ensure all required top-level keys are present
+                if 'model' in data and 'prog_id' in data and 'sop' in data and 'connectors' in data:
+                    connector_files_metadata.append({
+                        "model": data["model"],
+                        "prog_id": data["prog_id"],
+                        "sop": data["sop"],
+                        "filename": filename, # Store the original filename
+                        "build_information": data.get("build_information", []) # Get build info, default to empty list
+                    })
+                else:
+                    st.warning(f"Skipping {filename}: missing one or more required keys ('model', 'prog_id', 'sop', 'connectors') in JSON structure.")
+        except json.JSONDecodeError:
+            st.error(f"Error decoding JSON from {filename}. Please ensure it's valid.")
+        except Exception as e:
+            st.error(f"An unexpected error occurred while processing {filename}: {e}")
+    return connector_files_metadata
+
+all_connectors_metadata = load_connector_metadata()
+
+if not all_connectors_metadata:
+    st.error("No valid connector data files found or loaded. "
+             "Please ensure 'connectors_ModelX_prog-Y.json' files exist, "
+             "are valid JSON, and contain 'model', 'prog_id', 'sop', and 'connectors' keys.")
     st.stop()
 
-if not connectors_data:
-    st.warning("No data found in 'connectors.json'.")
-    df = pd.DataFrame()
+st.sidebar.header("Select Vehicle Program")
+
+models = sorted(list(set(meta["model"] for meta in all_connectors_metadata)))
+selected_model = st.sidebar.selectbox("1. Select Model", models, index=0 if models else -1) # Select first model by default if available
+
+selected_sop_display = None
+target_filename = None
+connectors_data = [] # Initialize as empty list; this will hold the list of connector dicts
+current_build_info = []
+
+if selected_model:
+    metadata_for_selected_model = [meta for meta in all_connectors_metadata if meta["model"] == selected_model]
+    
+    def sop_sort_key(sop_string):
+        if isinstance(sop_string, str) and sop_string.startswith("SOP") and sop_string[3:].isdigit():
+            return int(sop_string[3:])
+        return float('inf') # Place non-standard or non-string SOPs at the end
+
+    # Create a list of unique SOP display names (including build info) for the selected model, sorted correctly
+    sops_for_model_display_tuples = [] # Will store (display_string, original_sop, original_prog_id)
+    seen_sops_for_selectbox = set() # To track unique SOPs based on their original string (e.g. "SOP1")
+    
+    # Sort metadata by SOP and then prog_id to ensure consistent ordering
+    sorted_metadata_for_model = sorted(metadata_for_selected_model, key=lambda x: (sop_sort_key(x["sop"]), x["prog_id"]))
+
+    for meta in sorted_metadata_for_model:
+        # We want one entry per unique SOP string (like "SOP1", "SOP2")
+        # The build_information from the *first* encountered prog_id for that SOP will be used for display.
+        # This assumes that if multiple prog_ids share an SOP string, their build info is either identical
+        # or the first one encountered by sort order is representative.
+        # For this version, the display_text in the selectbox will be just the SOP identifier.
+        if meta["sop"] not in seen_sops_for_selectbox:
+            display_text = meta['sop'] # Just the SOP name, e.g., "SOP1"
+            # We still store the original prog_id to uniquely identify the file later
+            sops_for_model_display_tuples.append((display_text, meta["sop"], meta["prog_id"]))
+            seen_sops_for_selectbox.add(meta["sop"])
+            
+    # sops_display_strings will now be just ["SOP1", "SOP2", ...]
+    sops_display_strings = [item[0] for item in sops_for_model_display_tuples]
+
+    if not sops_display_strings:
+        st.sidebar.warning(f"No SOPs found for model {selected_model}.")
+    else:
+        # selected_sop_display_string is now just the SOP identifier like "SOP1"
+        selected_sop_display_string = st.sidebar.selectbox( 
+            f"2. Select Program (SOP) for {selected_model}", 
+            sops_display_strings, 
+            index=0 if sops_display_strings else -1 
+        )
+
+    # Display static list of ALL SOPs and their build info for the selected MODEL within an expander
+    st.sidebar.markdown("---") # Separator before the expander
+    with st.sidebar.expander(f"View All SOPs & Build Info for {selected_model}", expanded=False):
+        # The title for the list is now part of the expander label or can be a markdown inside
+        # st.markdown(f"**Available Programs (SOPs) for {selected_model}:**") # This can be removed if expander title is enough
+
+        temp_seen_sops = set()
+        for meta_item in sorted_metadata_for_model: # Iterate through all metadata for the model, sorted by SOP
+            if meta_item["sop"] not in temp_seen_sops: # Display each SOP string only once
+                st.markdown(f"**{meta_item['sop']}**") # Display SOP name boldly
+                build_info_lines = meta_item.get("build_information", [])
+                if build_info_lines:
+                    for info_line in build_info_lines:
+                        st.caption(info_line) # Each build info on its own line as caption
+                else:
+                    st.caption("No build information available.")
+                # Add a little visual space before the next SOP, if desired, e.g., st.caption("") or st.markdown("<br>", unsafe_allow_html=True)
+                # For now, let's see how it looks without explicit extra spacing between SOP blocks.
+                temp_seen_sops.add(meta_item["sop"])
+    st.sidebar.markdown("---") # Separator after the expander
+
+
+if selected_model and selected_sop_display_string: # This is now just "SOP1", "SOP2", etc.
+    # Find the tuple that matches the selected SOP string.
+    selected_sop_tuple = next((item for item in sops_for_model_display_tuples if item[0] == selected_sop_display_string), None)
+
+    if selected_sop_tuple:
+        original_sop_val = selected_sop_tuple[1] 
+        target_prog_id = selected_sop_tuple[2]   
+
+        matching_meta = next((meta for meta in sorted_metadata_for_model 
+                              if meta["model"] == selected_model and 
+                                 meta["sop"] == original_sop_val and 
+                                 meta["prog_id"] == target_prog_id), None) 
+        
+        if matching_meta:
+            selected_sop_display = original_sop_val 
+        else:
+            st.error(f"Internal error: Could not re-find data for selected SOP. Model: {selected_model}, SOP: {original_sop_val}, Prog ID: {target_prog_id}")
+            st.stop()
+    else:
+        st.error(f"Internal error: Could not parse selected SOP. Selected string: {selected_sop_display_string}")
+        st.stop()
+
+    if matching_meta: 
+        target_filename = matching_meta["filename"]
+        # current_build_info is still loaded here from matching_meta["build_information"]
+        # but it's not explicitly displayed again, as the static list above covers it.
+        current_build_info = matching_meta["build_information"] 
+    else:
+        st.error(f"Internal error: Could not find data file for Model: {selected_model}, SOP: {selected_sop_display_string}")
+        st.stop()
+
+# Load connector data from the determined file
+if target_filename:
+    try:
+        with open(target_filename) as f:
+            full_file_data = json.load(f)
+            connectors_data = full_file_data.get("connectors", [])
+            # Separator before the main search filters start.
+            # This was previously after build info display, now it's just after SOP selection logic.
+            # The static build info list has its own separators.
+            # The st.sidebar.markdown("---") that was here is removed as the static list section handles its own separators.
+            # Let's ensure there's one before the "Connector Search Filters" header.
+            # The "Connector Search Filters" header is added later, so this is fine.
+
+    except FileNotFoundError:
+        st.error(f"Error: File '{target_filename}' not found for {selected_model} - {selected_sop_display}.")
+        st.stop()
+    except json.JSONDecodeError:
+        st.error(f"Error: Could not decode JSON from '{target_filename}'. Ensure it is a valid JSON file.")
+        st.stop()
+    except Exception as e:
+        st.error(f"An unexpected error occurred while loading data from {target_filename}: {e}")
+        st.stop()
 else:
-    df = pd.DataFrame(connectors_data)
+    # Handle cases where a file couldn't be determined
+    if selected_model and selected_sop_display:
+        st.warning("Could not determine the data file for the selected model and program.")
+    elif selected_model:
+        st.info("Please select a Program (SOP) to load connector data.")
+    else:
+        st.info("Please select a Model to begin.")
+    # connectors_data remains an empty list, df will be empty.
+
+# --- DataFrame Creation and Initial Processing ---
+# This section now uses the dynamically loaded `connectors_data` (which is a list of connector dictionaries)
+if not connectors_data: # Check if the list of connectors itself is empty or not populated
+    st.warning(f"No connector data loaded. Please make a selection or check data files.")
+    df = pd.DataFrame() # Ensure df is an empty DataFrame
+else:
+    df = pd.DataFrame(connectors_data) # connectors_data is already the list of connector objects
+    # Ensure image_urls column exists and handles missing lists/NaN values
+    if 'image_urls' not in df.columns:
+        df['image_urls'] = [[] for _ in range(len(df))] 
+    else:
+        df['image_urls'] = df['image_urls'].apply(lambda x: x if isinstance(x, list) else [])
 
 # --- Precompute necessary columns ---
 if not df.empty:
@@ -52,14 +222,25 @@ if not df.empty:
 
 else: # Handle empty DataFrame case for sliders and selectboxes
     df['total_cavities'] = pd.Series(dtype='int')
+    df['num_connected_cavities'] = pd.Series(dtype='int') # Added for empty df
     df['num_unconnected_cavities'] = pd.Series(dtype='int')
     df['manufacturer'] = pd.Series(dtype='str')
     df['connector_part_number_full'] = pd.Series(dtype='str')
     df['tesla_part_number_str'] = pd.Series(dtype='str')
     df['connector_body_color'] = pd.Series(dtype='str')
+    df['image_urls'] = pd.Series(dtype=object) # Ensure schema for empty df
     PREDEFINED_WIRE_COLORS = ["ANY"]
     PREDEFINED_CONNECTOR_BODY_COLORS = ["ANY"]
 
+# --- Helper function for counting specific wires ---
+def count_specific_wires(pinout_list, color_to_count):
+    if not pinout_list: return 0
+    count = 0
+    for p in pinout_list:
+        if p.get('Wire Color') == color_to_count:
+            count += 1
+    return count
+# --- End Helper function ---
 
 # --- Sidebar filters ---
 st.sidebar.header("Connector Search Filters")
@@ -73,70 +254,103 @@ min_total_cav_filter, max_total_cav_filter = st.sidebar.slider(
     (0, max_total_cav)
 )
 
+# Slider for Connected Cavities
+max_conn_cav = int(df.num_connected_cavities.max()) if not df.num_connected_cavities.empty else 0
+min_conn_cav_filter, max_conn_cav_filter = st.sidebar.slider(
+    "Number of connected cavities",
+    0,
+    max_conn_cav, # Use max_total_cav here as connected can be up to total
+    (0, max_conn_cav) # Default to full range
+)
+
 # Slider for Unconnected Cavities
 max_unconn_cav = int(df.num_unconnected_cavities.max()) if not df.num_unconnected_cavities.empty else 0
 min_unconn_cav_filter, max_unconn_cav_filter = st.sidebar.slider(
     "Number of unconnected cavities",
     0,
-    max_unconn_cav,
-    (0, max_unconn_cav)
+    max_unconn_cav, # Use max_total_cav here as unconnected can be up to total
+    (0, max_unconn_cav) # Default to full range
 )
 
-manuf_filter = st.sidebar.text_input("Manufacturer (starts with, case-insensitive)")
+# manuf_filter = st.sidebar.text_input("Manufacturer (starts with, case-insensitive)") # Removed
 tesla_pn_filter = st.sidebar.text_input("Tesla Part Number (contains, case-insensitive)")
-connector_pn_filter = st.sidebar.text_input("Connector Part Number (contains in 'connector' field, case-insensitive)")
+# connector_pn_filter = st.sidebar.text_input("Connector Part Number (contains in 'connector' field, case-insensitive)") # Renamed below
+combined_manuf_connector_pn_filter = st.sidebar.text_input("Manuf. / Connector P/N (contains, case-insensitive)")
+
 
 selected_body_color_filter = st.sidebar.selectbox("Connector Body Color", PREDEFINED_CONNECTOR_BODY_COLORS)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Wire in Specific Cavity")
-cavity_num_input = st.sidebar.text_input("Cavity #", "")
-selected_wire_color_filter = st.sidebar.selectbox("Wire Color (for specific cavity)", PREDEFINED_WIRE_COLORS, key="specific_cavity_wire_color")
+# "Wire in Specific Cavity" section removed
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Count of Specific Wire Color")
-count_wire_color_to_filter = st.sidebar.selectbox("Wire Color (for count)", PREDEFINED_WIRE_COLORS, key="count_wire_color")
-count_wire_color_target_quantity = st.sidebar.number_input("Exact quantity of this wire color", min_value=0, value=0, step=1)
+st.sidebar.subheader("Count of Specific Wire Color 1")
+count_wire_color_to_filter_1 = st.sidebar.selectbox(
+    "Wire Color (for count 1)", 
+    PREDEFINED_WIRE_COLORS, 
+    key="count_wire_color_1"
+)
+min_count_filter_1, max_count_filter_1 = st.sidebar.slider(
+    "Quantity range for wire color 1",
+    0,
+    max_total_cav, 
+    (0, max_total_cav),
+    key="count_wire_color_slider_1"
+)
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("Count of Specific Wire Color 2")
+count_wire_color_to_filter_2 = st.sidebar.selectbox(
+    "Wire Color (for count 2)", 
+    PREDEFINED_WIRE_COLORS, 
+    key="count_wire_color_2"
+)
+min_count_filter_2, max_count_filter_2 = st.sidebar.slider(
+    "Quantity range for wire color 2",
+    0,
+    max_total_cav,
+    (0, max_total_cav),
+    key="count_wire_color_slider_2"
+)
 
 # --- Apply filters ---
 if not df.empty:
     mask = pd.Series([True] * len(df))
 
     mask &= (df.total_cavities.between(min_total_cav_filter, max_total_cav_filter))
+    mask &= (df.num_connected_cavities.between(min_conn_cav_filter, max_conn_cav_filter)) # Added filter
     mask &= (df.num_unconnected_cavities.between(min_unconn_cav_filter, max_unconn_cav_filter))
 
-    if manuf_filter:
-        mask &= df.manufacturer.str.upper().str.startswith(manuf_filter.upper())
+    # if manuf_filter: # Removed
+    #     mask &= df.manufacturer.str.upper().str.startswith(manuf_filter.upper())
     
     if tesla_pn_filter:
         mask &= df.tesla_part_number_str.str.upper().str.contains(tesla_pn_filter.upper())
 
-    if connector_pn_filter:
-        # Search within the full 'connector' string (which includes manufacturer and part number)
-        mask &= df.connector_part_number_full.str.upper().str.contains(connector_pn_filter.upper())
+    # if connector_pn_filter: # Replaced by combined_manuf_connector_pn_filter
+    #     # Search within the full 'connector' string (which includes manufacturer and part number)
+    #     mask &= df.connector_part_number_full.str.upper().str.contains(connector_pn_filter.upper())
+
+    if combined_manuf_connector_pn_filter:
+        search_term_upper = combined_manuf_connector_pn_filter.upper()
+        mask &= (
+            df.manufacturer.str.upper().str.contains(search_term_upper) | 
+            df.connector_part_number_full.str.upper().str.contains(search_term_upper)
+        )
 
     if selected_body_color_filter != "ANY":
         mask &= (df.connector_body_color == selected_body_color_filter)
 
-    if cavity_num_input and selected_wire_color_filter != "ANY":
-        def check_wire_in_cavity(pinout_list, cavity_num, wire_color_val):
-            if not pinout_list: return False
-            for p in pinout_list:
-                if p.get('Cavity') == cavity_num and p.get('Wire Color') == wire_color_val:
-                    return True
-            return False
-        mask &= df['pinout_table'].apply(lambda pts: check_wire_in_cavity(pts, cavity_num_input, selected_wire_color_filter))
+    # "Wire in Specific Cavity" filter logic removed
 
-    if count_wire_color_to_filter != "ANY" and count_wire_color_target_quantity > 0:
-        def count_specific_wires(pinout_list, color_to_count):
-            if not pinout_list: return 0
-            count = 0
-            for p in pinout_list:
-                if p.get('Wire Color') == color_to_count:
-                    count += 1
-            return count
-        mask &= df['pinout_table'].apply(lambda pts: count_specific_wires(pts, count_wire_color_to_filter) == count_wire_color_target_quantity)
+    # Filter for Count of Specific Wire Color 1
+    if count_wire_color_to_filter_1 != "ANY":
+        actual_counts_1 = df['pinout_table'].apply(lambda pts: count_specific_wires(pts, count_wire_color_to_filter_1))
+        mask &= (actual_counts_1 >= min_count_filter_1) & (actual_counts_1 <= max_count_filter_1)
+
+    # Filter for Count of Specific Wire Color 2
+    if count_wire_color_to_filter_2 != "ANY":
+        actual_counts_2 = df['pinout_table'].apply(lambda pts: count_specific_wires(pts, count_wire_color_to_filter_2))
+        mask &= (actual_counts_2 >= min_count_filter_2) & (actual_counts_2 <= max_count_filter_2)
     
     filtered_df = df[mask]
 else:
@@ -147,21 +361,42 @@ st.header("Connector Search Results")
 st.write(f"### {len(filtered_df)} connectors found")
 
 if not filtered_df.empty:
-    st.dataframe(filtered_df[[
-        'name', 
-        'connector', # Full connector string
-        'total_cavities', 
-        'num_unconnected_cavities',
-        'num_connected_cavities',
-        'manufacturer', 
-        'connector_body_color',
-        'tesla_part_number'
-    ]])
+    for index, row in filtered_df.iterrows():
+        st.subheader(row.get('name', 'N/A'))
+        
+        # Display textual details in two columns for better layout
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Connector:** {row.get('connector', 'N/A')}")
+            st.write(f"**Tesla Part #:** {row.get('tesla_part_number_str', 'N/A')}")
+            st.write(f"**Manufacturer:** {row.get('manufacturer', 'N/A')}")
+        with col2:
+            st.write(f"**Body Color:** {row.get('connector_body_color', 'N/A')}")
+            st.write(f"**Total Cavities:** {row.get('total_cavities', 'N/A')}")
+            st.write(f"**Connected Cavities:** {row.get('num_connected_cavities', 'N/A')}")
+            st.write(f"**Unconnected Cavities:** {row.get('num_unconnected_cavities', 'N/A')}")
+
+        # Display images
+        image_urls = row.get('image_urls', []) 
+        if image_urls: 
+            st.write("**Images:**")
+            num_img_display_cols = min(len(image_urls), 2) # Use at most 2 columns
+            if num_img_display_cols > 0: # Ensure we have columns to create
+                img_display_cols = st.columns(num_img_display_cols)
+                for i, img_url in enumerate(image_urls):
+                    with img_display_cols[i % num_img_display_cols]:
+                        st.image(img_url, caption=f"Image {i+1}", use_container_width=True)
+            else: # Fallback if somehow num_img_display_cols is 0 but image_urls is not empty (should not happen with min(len,2))
+                 for i, img_url in enumerate(image_urls):
+                    st.image(img_url, caption=f"Image {i+1}", use_container_width=True)
+
+
+        st.markdown("---") # Separator between connector entries
 else:
     st.write("No connectors match the current filters.")
 
 st.sidebar.markdown("---")
-st.sidebar.info("Tip: Clear filters or adjust ranges if you don't see expected results.")
+st.sidebar.info("Tip: Clear filters (refresh) or adjust ranges if you don't see expected results.")
 
 # For debugging or viewing all data:
 # if st.checkbox("Show all data (first 100 rows)"):
