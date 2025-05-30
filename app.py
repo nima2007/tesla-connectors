@@ -214,12 +214,41 @@ if not df.empty:
             wc = pin.get('Wire Color')
             if wc and wc not in ['unused', '']:
                 all_wire_colors.add(wc)
-    PREDEFINED_WIRE_COLORS = sorted(list(all_wire_colors))
-    PREDEFINED_WIRE_COLORS.insert(0, "ANY")
+    
+    # Define color mapping (ensure it's defined before this or move definition up)
+    color_map = {
+        "BK": "Black", "BN": "Brown", "BU": "Blue", "GN": "Green", "GY": "Gray",
+        "OG": "Orange", "RD": "Red", "VT": "Violet (Purple)", "WH": "White", "YE": "Yellow"
+        # Add other wire-specific colors if necessary, or rely on "?"
+    }
+
+    PREDEFINED_WIRE_COLORS_DISPLAY = ["ANY"]
+    for color_abbr in sorted(list(all_wire_colors)):
+        full_name = color_map.get(color_abbr.upper()) # Get full name, or None if not found
+        if full_name:
+            PREDEFINED_WIRE_COLORS_DISPLAY.append(f"{color_abbr} - {full_name}")
+        else:
+            PREDEFINED_WIRE_COLORS_DISPLAY.append(f"{color_abbr}") # Append only abbreviation
+    PREDEFINED_WIRE_COLORS = PREDEFINED_WIRE_COLORS_DISPLAY # Use the display list
 
     all_connector_body_colors = sorted(list(set(c for c in df['connector_body_color'].unique() if c)))
-    PREDEFINED_CONNECTOR_BODY_COLORS = sorted(list(all_connector_body_colors))
-    PREDEFINED_CONNECTOR_BODY_COLORS.insert(0, "ANY")
+    
+    # Color map is already defined above for wire colors, ensure it's comprehensive enough
+    # or that the PREDEFINED_CONNECTOR_BODY_COLORS section reuses/extends it if needed.
+    # For this change, we assume the existing color_map is sufficient or already placed correctly.
+
+    # Create display strings for connector body colors
+    PREDEFINED_CONNECTOR_BODY_COLORS_DISPLAY = ["ANY"]
+    for color_abbr in all_connector_body_colors:
+        full_name = color_map.get(color_abbr.upper()) # Get full name, or None if not found
+        if full_name:
+            PREDEFINED_CONNECTOR_BODY_COLORS_DISPLAY.append(f"{color_abbr} - {full_name}")
+        else:
+            PREDEFINED_CONNECTOR_BODY_COLORS_DISPLAY.append(f"{color_abbr}") # Append only abbreviation
+    
+    # Keep the original list for filtering if needed, or adjust filter logic
+    # For now, the selectbox will use the display list. The filter logic will need adjustment.
+    PREDEFINED_CONNECTOR_BODY_COLORS = PREDEFINED_CONNECTOR_BODY_COLORS_DISPLAY # Use the display list for the selectbox
 
 else: # Handle empty DataFrame case for sliders and selectboxes
     df['total_cavities'] = pd.Series(dtype='int')
@@ -230,8 +259,8 @@ else: # Handle empty DataFrame case for sliders and selectboxes
     df['tesla_part_number_str'] = pd.Series(dtype='str')
     df['connector_body_color'] = pd.Series(dtype='str')
     df['image_urls'] = pd.Series(dtype=object) # Ensure schema for empty df
-    PREDEFINED_WIRE_COLORS = ["ANY"]
-    PREDEFINED_CONNECTOR_BODY_COLORS = ["ANY"]
+    PREDEFINED_WIRE_COLORS = ["ANY"] # This will be ["ANY", "ABR - Full Name", ...]
+    PREDEFINED_CONNECTOR_BODY_COLORS = ["ANY"] # This will be a list of "ABR - Full Name" or just ["ANY"]
 
 # --- Helper function for counting specific wires ---
 def count_specific_wires(pinout_list, color_to_count):
@@ -277,7 +306,7 @@ tesla_pn_filter = st.sidebar.text_input("Tesla Part Number (contains, case-insen
 combined_manuf_connector_pn_filter = st.sidebar.text_input("Manuf. / Connector P/N (contains, case-insensitive)")
 
 
-selected_body_color_filter = st.sidebar.selectbox("Connector Body Color", PREDEFINED_CONNECTOR_BODY_COLORS)
+selected_body_color_filter_display = st.sidebar.selectbox("Connector Body Color", PREDEFINED_CONNECTOR_BODY_COLORS)
 
 # "Wire in Specific Cavity" section removed
 
@@ -329,19 +358,23 @@ if not df.empty:
             df.connector_part_number_full.str.upper().str.contains(search_term_upper)
         )
 
-    if selected_body_color_filter != "ANY":
-        mask &= (df.connector_body_color == selected_body_color_filter)
+    if selected_body_color_filter_display != "ANY":
+        # Extract the abbreviation from the display string "ABR - Full Name"
+        selected_body_color_abbr = selected_body_color_filter_display.split(" - ")[0]
+        mask &= (df.connector_body_color == selected_body_color_abbr)
 
     # "Wire in Specific Cavity" filter logic removed
 
     # Filter for Count of Specific Wire Color 1
     if count_wire_color_to_filter_1 != "ANY":
-        actual_counts_1 = df['pinout_table'].apply(lambda pts: count_specific_wires(pts, count_wire_color_to_filter_1))
+        selected_wire_color_abbr_1 = count_wire_color_to_filter_1.split(" - ")[0]
+        actual_counts_1 = df['pinout_table'].apply(lambda pts: count_specific_wires(pts, selected_wire_color_abbr_1))
         mask &= (actual_counts_1 >= min_count_filter_1) & (actual_counts_1 <= max_count_filter_1)
 
     # Filter for Count of Specific Wire Color 2
     if count_wire_color_to_filter_2 != "ANY":
-        actual_counts_2 = df['pinout_table'].apply(lambda pts: count_specific_wires(pts, count_wire_color_to_filter_2))
+        selected_wire_color_abbr_2 = count_wire_color_to_filter_2.split(" - ")[0]
+        actual_counts_2 = df['pinout_table'].apply(lambda pts: count_specific_wires(pts, selected_wire_color_abbr_2))
         mask &= (actual_counts_2 >= min_count_filter_2) & (actual_counts_2 <= max_count_filter_2)
     
     filtered_df = df[mask]
